@@ -1,0 +1,27 @@
+name: Bug report
+description: Report a reproducible problem in the scoreboard.
+title: "[Bug]: "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: "Do not include passwords, OAuth credentials, student IDs, or private participant data."
+  - type: textarea
+    id: problem
+    attributes:
+      label: What happened?
+      description: Describe the issue and what you expected instead.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      placeholder: "1. Open... 2. Select... 3. Observe..."
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Browser and environment
+      placeholder: "For example, Chrome on Windows; local or deployed"

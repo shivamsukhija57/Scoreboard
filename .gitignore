@@ -1,0 +1,13 @@
+node_modules/
+.next/
+out/
+.data/
+tmp/
+.vercel/
+.env*
+!.env.example
+*.tsbuildinfo
+password
+
+.vercel
+.env*

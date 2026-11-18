@@ -1,0 +1,26 @@
+name: Feature request
+description: Suggest an improvement to the scoreboard.
+title: "[Feature]: "
+labels: [enhancement]
+body:
+  - type: textarea
+    id: need
+    attributes:
+      label: What need should this address?
+      description: Explain who needs this and why.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+      description: Describe the desired workflow or outcome.
+    validations:
+      required: true
+  - type: checkboxes
+    id: safety
+    attributes:
+      label: Data safety
+      options:
+        - label: I have not included credentials, student IDs, or private participant data.
+          required: true
