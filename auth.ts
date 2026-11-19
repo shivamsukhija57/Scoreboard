@@ -40,4 +40,16 @@ export const authOptions: NextAuthOptions = {
   },
 };
 
-export const auth = () => getServerSession(authOptions);
+export async function auth() {
+  try {
+    return await getServerSession(authOptions);
+  } catch (error) {
+    // A browser can retain a JWT encrypted with an older local/deployment
+    // secret. Treat that cookie as signed out so public pages still load.
+    const details = error instanceof Error
+      ? `${error.name} ${error.message}`
+      : String(error);
+    if (/JWT_SESSION_ERROR|decryption operation failed/i.test(details)) return null;
+    throw error;
+  }
+}

@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getUserAccess, isCentralAdmin } from "@/lib/access";
-import type { EventDefinition } from "@/lib/domain";
+import type { EventDefinition, SportScoringConfig } from "@/lib/domain";
 import { updateCompetition } from "@/lib/store";
 
 interface EventRulesInput {
@@ -17,6 +17,7 @@ interface EventRulesInput {
   rosterRules: string[];
   scoringRules: string[];
   scoringType: string;
+  scoringConfig: SportScoringConfig;
   points: number[];
   outcomePoints: Record<string, number>;
   publishPoints: boolean;
@@ -44,6 +45,10 @@ export async function PUT(request: Request) {
   if (body.points.some((value) => !Number.isFinite(value) || value < 0) || Object.values(body.outcomePoints).some((value) => !Number.isFinite(value) || value < 0)) {
     return NextResponse.json({ error: "Points must be zero or greater." }, { status: 400 });
   }
+  for (const key of ["inningsCount", "oversPerInnings", "wicketsPerInnings", "pointsToWin", "winBy", "setsToWin", "periods", "periodMinutes"] as const) {
+    const value = body.scoringConfig?.[key];
+    if (value !== undefined && (!Number.isInteger(value) || value < 1 || value > 1000)) return NextResponse.json({ error: `Scoring setting ${key} must be a positive whole number.` }, { status: 400 });
+  }
 
   const result = await updateCompetition(access.email, "event-rules-update", `Updated ${body.eventId} rulebook data`, body.eventId, (data) => {
     const event = data.events.find((item) => item.id === body.eventId);
@@ -60,6 +65,7 @@ export async function PUT(request: Request) {
     event.rosterRules = body.rosterRules.map((rule) => rule.trim()).filter(Boolean);
     event.scoringRules = body.scoringRules.map((rule) => rule.trim()).filter(Boolean);
     event.scoringType = body.scoringType.trim();
+    event.scoringConfig = body.scoringConfig ?? {};
     event.pointsPolicy.places = body.points;
     event.pointsPolicy.pointsByOutcome = body.outcomePoints;
     event.pointsPolicy.name = body.publishPoints ? `${body.name.trim()} rulebook points` : "Draft points policy";

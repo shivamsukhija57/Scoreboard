@@ -15,6 +15,7 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
     startsAt: string;
     durationMinutes: number;
     venue: string;
+    stage?: "league" | "semifinal" | "final" | "other";
     acknowledgeConflict?: boolean;
   };
   if (!body.eventId || !body.startsAt || !body.venue || !Number.isFinite(body.durationMinutes) || body.durationMinutes <= 0) {
@@ -47,6 +48,7 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
     fixture.startsAt = new Date(body.startsAt).toISOString();
     fixture.durationMinutes = body.durationMinutes;
     fixture.venue = body.venue.trim();
+    fixture.stage = body.stage ?? "league";
     fixture.updatedAt = new Date().toISOString();
     changeDetail = JSON.stringify({ before, after: { eventId: fixture.eventId, sectionA: fixture.sectionA, sectionB: fixture.sectionB, startsAt: fixture.startsAt, durationMinutes: fixture.durationMinutes, venue: fixture.venue }, acknowledgedConflicts: conflicts.length });
     return { fixture, conflicts: conflicts.length };

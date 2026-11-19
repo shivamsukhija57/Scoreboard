@@ -10,6 +10,7 @@ export const rulebookSections: Section[] = [
 
 const sport = (id: string, name: string, category: Sport["category"] = "sport", cap = true, formats: number | null = 2, participationNotes: string[] = []): Sport => ({
   id, name, category, countsTowardOverallSportsCap: cap, maxFormatsPerPlayer: formats, participationNotes,
+  ...(id === "cricket" ? { standingsTieBreakers: ["points", "net-run-rate", "wins"] } : id === "football" ? { standingsTieBreakers: ["points", "goal-difference", "goals-for"] } : { standingsTieBreakers: ["points", "score-difference", "score-for"] }),
 });
 
 export const rulebookSports: Sport[] = [
@@ -45,7 +46,7 @@ type EventInput = {
   id: string; sportId: string; name: string; format: string; gender: EventDefinition["genderEligibility"];
   min: number; max: number | null; entries?: number; substitutes?: number; tournament: string;
   matches?: number | null; scoring: string; roster?: string[]; scoringRules?: string[];
-  outcomePoints?: Record<string, number>; places?: number[];
+  outcomePoints?: Record<string, number>; places?: number[]; scoringConfig?: EventDefinition["scoringConfig"];
 };
 
 const standardPoints = (leagueWin: number, semifinalLoss = Math.floor(leagueWin / 2), finalWin = leagueWin * 2) => ({
@@ -61,11 +62,28 @@ const e = (input: EventInput): EventDefinition => ({
   genderEligibility: input.gender, tournamentFormat: input.tournament,
   matchCount: input.matches === undefined ? (input.tournament === standard || input.tournament === group ? 12 : null) : input.matches,
   rosterRules: input.roster ?? [], scoringRules: input.scoringRules ?? [], scoringType: input.scoring,
+  scoringConfig: input.scoringConfig ?? parseScoringConfig(input),
   pointsPolicy: {
     id: `points-${input.id}`, name: `${input.name} rulebook points`, places: input.places ?? [],
     published: true, version: 1, ...(input.outcomePoints ? { pointsByOutcome: input.outcomePoints } : {}),
   }, headEmails: [],
 });
+
+function parseScoringConfig(input: EventInput): EventDefinition["scoringConfig"] {
+  const rules = [...(input.roster ?? []), input.format].join(" ");
+  const overs = rules.match(/(\d+)\s*overs?/i);
+  const wickets = rules.match(/(\d+)\s*wickets?/i);
+  const points = rules.match(/(?:to|up to)\s*(\d+)\b/i);
+  const sets = rules.match(/best of\s*(\d+)/i);
+  const periods = rules.match(/(\d+)\s*[×x]\s*(\d+)[- ]minute/i);
+  return {
+    ...(overs ? { oversPerInnings: Number(overs[1]) } : {}),
+    ...(wickets ? { wicketsPerInnings: Number(wickets[1]) } : {}),
+    ...(points ? { pointsToWin: Number(points[1]), winBy: 2 } : {}),
+    ...(sets ? { setsToWin: Math.ceil(Number(sets[1]) / 2) } : {}),
+    ...(periods ? { periods: Number(periods[1]), periodMinutes: Number(periods[2]) } : {}),
+  };
+}
 
 const standard = "Round robin (10 matches; each division plays 4), 2nd vs 3rd semifinal, then league leader vs semifinal winner in the final. 12 matches total.";
 const group = "Two teams per division in two groups of five (same-numbered teams together); 20 group matches, cross-semifinals, then final. 23 matches total. Same-division teams meeting in semifinals must play each other.";

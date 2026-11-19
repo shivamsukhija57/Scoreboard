@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 import { auth } from "../../auth";
 import type { CompetitionData, Role, RoleAssignment, UserAccess } from "./domain";
 import { readCompetition } from "./store";
+import { auditForRole, canScoreEvent } from "./live-scoring-utils";
 
 export async function getUserAccess(): Promise<UserAccess | null> {
   const session = await auth();
@@ -53,7 +54,7 @@ export function canManageSection(access: UserAccess, sectionId: string): boolean
 }
 
 export function canManageEvent(access: UserAccess, eventId: string): boolean {
-  return hasRole(access, "event-head", eventId);
+  return canScoreEvent(access.assignments, eventId);
 }
 
 export function canSchedule(access: UserAccess): boolean {
@@ -67,11 +68,14 @@ export function isCentralAdmin(access: UserAccess): boolean {
 export function presentCompetition(data: CompetitionData, access: UserAccess): CompetitionData {
   const central = isCentralAdmin(access);
   const publicGuest = access.email === "guest@public.invalid";
+  const managedEvents = new Set(access.assignments.filter((assignment) => assignment.role === "event-head").map((assignment) => assignment.scopeId));
   const managedSections = new Set(access.assignments.filter((assignment) => assignment.role === "section-admin").map((assignment) => assignment.scopeId));
   return {
     ...data,
     assignments: central ? data.assignments : [],
+    audit: auditForRole(data.audit ?? [], central),
     entries: publicGuest ? [] : data.entries,
+    fixtures: central ? data.fixtures : data.fixtures.map((fixture) => ({ ...fixture, scorecard: fixture.scorecard && !managedEvents.has(fixture.eventId) ? { ...fixture.scorecard, events: fixture.scorecard.events.map((event) => ({ ...event, playerId: undefined, secondaryPlayerId: undefined, actor: "Organizer" })) } : fixture.scorecard })),
     participants: publicGuest ? [] : data.participants.map((participant) => ({
       ...participant,
       studentId: central || managedSections.has(participant.sectionId) ? participant.studentId : "",

@@ -34,3 +34,11 @@ The current rulebook catalog is dynamic competition data: sections, sports, even
 For an existing database, open Supabase **SQL Editor**, create a query, paste the contents of `supabase/rulebook_update.sql`, and run it once. The script replaces sections, sports/cultural categories, and events with the rulebook catalog; preserves participants, entries, access assignments, audit history, and non-sample fixtures; and removes only fixtures whose IDs start with `sample-`. It returns the updated row version and catalog counts. Back up the project before applying a bulk catalog update if it already contains live event data.
 
 Afterward, central admins can edit event rules, points, sport-wide participation conditions, and each section's sports cap from **Sports & events** in the app. The first-year caps are A/B/C: 3 sports; D/E: 4 sports. FIFA, Valorant, and Athletics are excluded from that cap. Cultural participation has no overall cap. Badminton and Table Tennis also apply their shared roster/overlap requirements during entry submission.
+
+## Sport-specific match scorecards
+
+See [docs/scorecard-configuration.md](docs/scorecard-configuration.md) for scorer workflow, configurable event rules, and current scorecard limits.
+
+## Troubleshooting Google sign-in sessions
+
+If the page reports `JWT_SESSION_ERROR` or `decryption operation failed`, the browser is holding a session cookie encrypted with a different `AUTH_SECRET`. The app treats an unreadable session as signed out so public pages remain available. Clear the site data/cookies for `localhost` (or the deployed app domain), reload, and sign in again. Keep `AUTH_SECRET` unchanged across restarts and deployments; changing it signs out existing sessions. Use the same configured secret for every instance of the same deployment.

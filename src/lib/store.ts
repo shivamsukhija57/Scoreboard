@@ -1,8 +1,9 @@
 import { randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
-import type { CompetitionData } from "./domain";
+import type { AuditEntry, CompetitionData } from "./domain";
 import { createSeedData } from "./seed";
+import { migrateLegacyResults } from "./match-scorecard";
 
 const dataFile = path.resolve(process.cwd(), process.env.DATA_FILE ?? ".data/competition.json");
 const supabaseUrl = process.env.SUPABASE_URL?.trim().replace(/\/+$/, "");
@@ -86,9 +87,15 @@ async function ensureLocalData(): Promise<void> {
 }
 
 export async function readCompetition(): Promise<CompetitionData> {
-  if (useSupabase()) return (await readSupabaseState()).state;
+  if (useSupabase()) {
+    const data = (await readSupabaseState()).state;
+    migrateLegacyResults(data);
+    return data;
+  }
   await ensureLocalData();
-  return JSON.parse(await readFile(dataFile, "utf8")) as CompetitionData;
+  const data = JSON.parse(await readFile(dataFile, "utf8")) as CompetitionData;
+  migrateLegacyResults(data);
+  return data;
 }
 
 function isRejectedResult<T>(result: T): boolean {
@@ -104,17 +111,20 @@ async function updateSupabaseCompetition<T>(
 ): Promise<T> {
   for (let attempt = 0; attempt < 8; attempt += 1) {
     const snapshot = await readSupabaseState();
+    migrateLegacyResults(snapshot.state);
     const result = await update(snapshot.state);
     if (isRejectedResult(result)) return result;
 
-    snapshot.state.audit.unshift({
+    const auditEntry: AuditEntry = {
       id: randomUUID(),
       at: new Date().toISOString(),
       actor,
       action,
       detail: typeof detail === "function" ? detail() : detail,
       entityId,
-    });
+    };
+    snapshot.state.audit.unshift(auditEntry);
+    if (result && typeof result === "object") Object.assign(result, { auditEntry });
     const saved = await supabaseRequest<boolean>("rpc/save_competition_state", {
       method: "POST",
       body: JSON.stringify({ expected_version: snapshot.version, next_state: snapshot.state }),
@@ -140,16 +150,19 @@ export async function updateCompetition<T>(
 
     await ensureLocalData();
     const data = JSON.parse(await readFile(dataFile, "utf8")) as CompetitionData;
+    migrateLegacyResults(data);
     result = await update(data);
     if (isRejectedResult(result)) return;
-    data.audit.unshift({
+    const auditEntry: AuditEntry = {
       id: randomUUID(),
       at: new Date().toISOString(),
       actor,
       action,
       detail: typeof detail === "function" ? detail() : detail,
       entityId,
-    });
+    };
+    data.audit.unshift(auditEntry);
+    if (result && typeof result === "object") Object.assign(result, { auditEntry });
     await mkdir(path.dirname(dataFile), { recursive: true });
     const temporary = `${dataFile}.${randomUUID()}.tmp`;
     await writeFile(temporary, JSON.stringify(data, null, 2), "utf8");

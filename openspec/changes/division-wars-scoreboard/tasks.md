@@ -30,13 +30,13 @@
 
 ## 5. Live scoring and standings
 
-- [ ] 5.1 Define shared match lifecycle, result submission, confirmation, and correction behavior
+- [x] 5.1 Define shared match lifecycle, result submission, central-admin approval/rejection/reopen, and correction behavior
 - [ ] 5.2 Implement sport-specific live scoring for cricket
 - [ ] 5.3 Implement sport-specific live scoring for basketball and football
 - [ ] 5.4 Implement sport-specific live scoring for volleyball and throwball
 - [ ] 5.5 Implement sport-specific live scoring for tennis/lawn tennis and table tennis
 - [ ] 5.6 Implement sport-specific live scoring for foosball
-- [ ] 5.7 Apply published points policies to confirmed outcomes and recalculate standings after authorized corrections
+- [ ] 5.7 Apply stage-aware published points policies to both sections for confirmed outcomes and recalculate standings after authorized corrections
 - [ ] 5.8 Confirm event formats, sport rules, points, and participation caps with the organizer before configuring the live competition
 
 ## 6. Spectator experience

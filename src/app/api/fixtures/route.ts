@@ -18,6 +18,7 @@ export async function POST(request: Request) {
     startsAt: string;
     durationMinutes: number;
     venue: string;
+    stage?: Fixture["stage"];
     acknowledgeConflict?: boolean;
   };
   if (!body.eventId || !body.startsAt || !body.venue || !Number.isFinite(body.durationMinutes) || body.durationMinutes <= 0) {
@@ -48,6 +49,7 @@ export async function POST(request: Request) {
       startsAt: new Date(body.startsAt).toISOString(),
       durationMinutes: body.durationMinutes,
       venue: body.venue.trim(),
+      stage: body.stage ?? "league",
       status: "scheduled",
       scoreA: 0,
       scoreB: 0,

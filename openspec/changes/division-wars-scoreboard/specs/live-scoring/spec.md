@@ -36,3 +36,21 @@ The system MUST calculate section points from confirmed outcomes using the event
 #### Scenario: Result is not confirmed
 - **WHEN** a result is awaiting confirmation
 - **THEN** the system does not treat its points as final in the standings
+
+#### Scenario: Central administrator reviews results
+- **WHEN** a central administrator opens the result approval workspace
+- **THEN** pending results show the event, fixture stage, scorecard, submitter, and prospective points for both sections
+- **AND** the administrator can approve or return a result with a required correction reason
+- **AND** previously approved results remain visible with approver and awarded points
+- **AND** reopening an approved result requires a reason, removes its points from standings, and returns it to scoring
+
+#### Scenario: Fixture stage determines result points
+- **WHEN** a scheduler creates or edits a fixture
+- **THEN** the fixture records whether it is a league/group match, semifinal, final, or other stage
+- **WHEN** an authorized central administrator approves the result
+- **THEN** winner and loser points are selected from the published event policy using the recorded stage
+- **AND** both section awards are visible on the approval screen and standings
+
+#### Scenario: Cricket extras distinguish wide and no-ball
+- **WHEN** an event head records a cricket wide or no-ball
+- **THEN** the scorecard records the extra type and runs, applies the automatic extra run, and does not count the delivery as a legal ball
