@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getUserAccess, isCentralAdmin } from "@/lib/access";
-import type { EventDefinition, SportScoringConfig } from "@/lib/domain";
+import type { EventDefinition, PointsFormat, SportScoringConfig } from "@/lib/domain";
 import { updateCompetition } from "@/lib/store";
 
 interface EventRulesInput {
@@ -21,8 +21,14 @@ interface EventRulesInput {
   points: number[];
   outcomePoints: Record<string, number>;
   publishPoints: boolean;
+  /** League / chit-ring / ring-group (paid in units of X) or placings. */
+  pointsFormat?: PointsFormat;
+  /** X, the match-win value. */
+  unit?: number | null;
+  walkoverScore?: number | null;
 }
 
+const validFormats = new Set<PointsFormat>(["league", "chit-ring", "ring-group", "placings"]);
 const validGenders = new Set<EventDefinition["genderEligibility"]>(["men", "women", "mixed", "open"]);
 
 export async function PUT(request: Request) {
@@ -45,6 +51,9 @@ export async function PUT(request: Request) {
   if (body.points.some((value) => !Number.isFinite(value) || value < 0) || Object.values(body.outcomePoints).some((value) => !Number.isFinite(value) || value < 0)) {
     return NextResponse.json({ error: "Points must be zero or greater." }, { status: 400 });
   }
+  if (body.pointsFormat !== undefined && !validFormats.has(body.pointsFormat)) return NextResponse.json({ error: "Choose a valid points format." }, { status: 400 });
+  if (body.unit !== undefined && body.unit !== null && (!Number.isFinite(body.unit) || body.unit < 0)) return NextResponse.json({ error: "The win value X must be zero or greater." }, { status: 400 });
+  if (body.walkoverScore !== undefined && body.walkoverScore !== null && (!Number.isInteger(body.walkoverScore) || body.walkoverScore < 0 || body.walkoverScore > 1000)) return NextResponse.json({ error: "The walkover score must be a whole number from 0." }, { status: 400 });
   for (const key of ["inningsCount", "oversPerInnings", "wicketsPerInnings", "pointsToWin", "winBy", "setsToWin", "periods", "periodMinutes"] as const) {
     const value = body.scoringConfig?.[key];
     if (value !== undefined && (!Number.isInteger(value) || value < 1 || value > 1000)) return NextResponse.json({ error: `Scoring setting ${key} must be a positive whole number.` }, { status: 400 });
@@ -65,7 +74,10 @@ export async function PUT(request: Request) {
     event.rosterRules = body.rosterRules.map((rule) => rule.trim()).filter(Boolean);
     event.scoringRules = body.scoringRules.map((rule) => rule.trim()).filter(Boolean);
     event.scoringType = body.scoringType.trim();
-    event.scoringConfig = body.scoringConfig ?? {};
+    const walkoverScore = body.walkoverScore === undefined ? event.scoringConfig?.walkoverScore : body.walkoverScore ?? undefined;
+    event.scoringConfig = { ...(body.scoringConfig ?? {}), ...(walkoverScore !== undefined ? { walkoverScore } : {}) };
+    if (body.pointsFormat) event.pointsPolicy.format = body.pointsFormat;
+    if (body.unit !== undefined) event.pointsPolicy.unit = body.unit ?? undefined;
     event.pointsPolicy.places = body.points;
     event.pointsPolicy.pointsByOutcome = body.outcomePoints;
     event.pointsPolicy.name = body.publishPoints ? `${body.name.trim()} rulebook points` : "Draft points policy";

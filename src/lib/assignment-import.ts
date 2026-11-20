@@ -12,6 +12,8 @@ const roleAliases: Record<string, Role> = {
   "scheduling access": "scheduler",
   "central admin": "central-admin",
   "central-admin": "central-admin",
+  judge: "judge",
+  "stage judge": "judge",
 };
 
 export interface ParsedAssignment {
@@ -70,7 +72,7 @@ export function normalizeAssignmentRows(rows: Array<Record<string, unknown>>) {
       const letter = sectionMatch[1].toLowerCase();
       scopeId = `s${/[1-5]/.test(letter) ? letter : "abcde".indexOf(letter) + 1}`;
       scopeLabel = `Section ${/[1-5]/.test(letter) ? "ABCDE"[Number(letter) - 1] : letter.toUpperCase()}`;
-    } else if ((role === "section-admin" || role === "event-head") && !rawScope) {
+    } else if ((role === "section-admin" || role === "event-head" || role === "judge") && !rawScope) {
       issues.push({ row: index + 2, message: `${role === "section-admin" ? "Section" : "Event"} scope is required.` });
       return;
     } else if (rawScope) {

@@ -1,18 +1,26 @@
-import type { Metadata } from "next";
-import "@fontsource/barlow-condensed/600.css";
-import "@fontsource/barlow-condensed/700.css";
-import "@fontsource/barlow-condensed/800.css";
-import "@fontsource/dm-sans/400.css";
-import "@fontsource/dm-sans/500.css";
-import "@fontsource/dm-sans/600.css";
-import "@fontsource/dm-sans/700.css";
+import type { Metadata, Viewport } from "next";
+// Field Day's condensed display face for titles, scores and totals; body text uses the system font (San Francisco on
+// Apple devices, Segoe UI on Windows), the Apple half of the Match Day direction.
+import "@fontsource/big-shoulders-display/700";
+import "@fontsource/big-shoulders-display/800";
+import "@fontsource/big-shoulders-display/900";
 import "./globals.css";
+import { themeBootScript } from "@/components/theme-toggle";
 
 export const metadata: Metadata = {
-  title: "Division Wars · First year",
-  description: "Live matches, fixtures, and section standings for Division Wars.",
+  title: "Division Wars",
+  description: "Live scores, fixtures and standings for Division Wars: Ares, Bloodhounds, Cyappa, Dracarys and Eagles.",
+};
+
+export const viewport: Viewport = {
+  themeColor: [{ media: "(prefers-color-scheme: light)", color: "#f2f2f7" }, { media: "(prefers-color-scheme: dark)", color: "#000000" }],
+  colorScheme: "light dark",
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
-  return <html lang="en"><body>{children}</body></html>;
+  // The theme attribute is set by the boot script before React hydrates, so it can legitimately differ from the server.
+  return <html lang="en" suppressHydrationWarning>
+    <head><script dangerouslySetInnerHTML={{ __html: themeBootScript }} /></head>
+    <body>{children}</body>
+  </html>;
 }

@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { endCricketInnings, migrateLegacyResults, recordCricketDelivery, recordMatchEvent, reverseCricketDelivery, startCricketInnings } from "./match-scorecard.ts";
+import { endCricketInnings, migrateLegacyResults, recordCricketBowlOut, recordCricketDelivery, recordMatchEvent, reverseCricketDelivery, startCricketInnings } from "./match-scorecard.ts";
 import { auditForRole, canScoreEvent, describeMatchAuditAction, finalizedFixturesForEvents, isUnchangedSnapshot, mergeCompetitionData, newerFixture, projectScoreAction, retryDelayMs, shouldPollFixture } from "./live-scoring-utils.ts";
 
 const eventId = "cricket-event";
@@ -252,4 +252,39 @@ test("audit details include actor context data, final points, and correction rea
   assert.match(reopened, /points removed 7–1 · reason: Wrong score/);
   const correction = describeMatchAuditAction(auditData, fixture, { action: "reverse-event", correctionReason: "Duplicate goal" }, { scoreA: 3, scoreB: 1, pointsA: 0, pointsB: 0 });
   assert.match(correction, /3–1 → 2–1 · reason: Duplicate goal/);
+});
+
+test("a level match needs a Super Over; the Super Over winner takes the points without changing the score", () => {
+  const { data: matchData, fixture } = setup();
+  const tie = (side, batter, partner, bowler, runs) => recordCricketDelivery(matchData, fixture, { cricketDelivery: { battingSide: side, batterId: batter, nonStrikerId: partner, bowlerId: bowler, batRuns: runs, extraType: "none", extraRuns: 0 } }, "scorer@example.edu");
+  assert.equal(tie("a", "a1", "a2", "b1", 4), null);
+  assert.equal(endCricketInnings(fixture), null);
+  assert.equal(startCricketInnings(matchData, fixture, { cricketInnings: { battingSide: "b", strikerId: "b1", nonStrikerId: "b2", bowlerId: "a1" } }), null);
+  assert.equal(tie("b", "b1", "b2", "a1", 4), null);
+  assert.equal(endCricketInnings(fixture), null);
+  assert.match(recordMatchEvent(matchData, fixture, { action: "submit" }, "s"), /Super Over/);
+  // Super Over: innings 3 and 4, one over and two wickets each.
+  assert.equal(startCricketInnings(matchData, fixture, { cricketInnings: { battingSide: "b", strikerId: "b1", nonStrikerId: "b2", bowlerId: "a1" } }), null);
+  assert.equal(tie("b", "b1", "b2", "a1", 6), null);
+  assert.equal(endCricketInnings(fixture), null);
+  assert.equal(startCricketInnings(matchData, fixture, { cricketInnings: { battingSide: "a", strikerId: "a1", nonStrikerId: "a2", bowlerId: "b1" } }), null);
+  assert.equal(tie("a", "a1", "a2", "b1", 2), null);
+  assert.equal(endCricketInnings(fixture), null);
+  assert.deepEqual([fixture.scoreA, fixture.scoreB], [4, 4]);
+  assert.equal(fixture.tieBreak.winner, "b");
+  assert.equal(recordMatchEvent(matchData, fixture, { action: "submit" }, "s"), null);
+  assert.deepEqual([fixture.awardedPointsA, fixture.awardedPointsB], [0, 2]);
+});
+
+test("a level Super Over waits for the bowl-out winner", () => {
+  const { data: matchData, fixture } = setup();
+  for (const [side, bat, bowl] of [["a", ["a1", "a2"], "b1"], ["b", ["b1", "b2"], "a1"], ["b", ["b1", "b2"], "a1"], ["a", ["a1", "a2"], "b1"]]) {
+    if (fixture.scorecard.cricket.innings.at(-1)?.completed) assert.equal(startCricketInnings(matchData, fixture, { cricketInnings: { battingSide: side, strikerId: bat[0], nonStrikerId: bat[1], bowlerId: bowl } }), null);
+    assert.equal(endCricketInnings(fixture), null);
+  }
+  assert.match(recordMatchEvent(matchData, fixture, { action: "submit" }, "s"), /bowl-out/);
+  assert.match(startCricketInnings(matchData, fixture, { cricketInnings: { battingSide: "a", strikerId: "a1", nonStrikerId: "a2", bowlerId: "b1" } }), /Super Over is complete/);
+  assert.equal(recordCricketBowlOut(matchData, fixture, { action: "cricket-bowl-out", tieBreakWinner: "a", reviewNote: "3-2 in the bowl-out" }, "admin"), null);
+  assert.equal(recordMatchEvent(matchData, fixture, { action: "submit" }, "s"), null);
+  assert.deepEqual([fixture.awardedPointsA, fixture.awardedPointsB], [2, 0]);
 });

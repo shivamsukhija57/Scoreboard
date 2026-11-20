@@ -9,6 +9,7 @@ export default async function HomePage() {
   const access = await getUserAccess();
   if (!access) redirect("/login");
   const data = await readCompetition();
-  const previewMode = access.email === "preview@spjimr.org" || access.email === "guest@public.invalid";
+  // The role switcher is only for the local demo account. Signed-out guests are spectators and see a spectator's app.
+  const previewMode = access.email === "preview@spjimr.org";
   return <Dashboard data={presentCompetition(data, access)} access={access} previewMode={previewMode} />;
 }

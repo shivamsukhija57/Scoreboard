@@ -1,5 +1,6 @@
-import { randomUUID } from "node:crypto";
-import type { CompetitionData, CricketDelivery, Fixture, MatchEvent, MatchEventKind, MatchScoreInput, MatchScorecard } from "./domain";
+import type { CompetitionData, CricketDelivery, CricketInnings, EventDefinition, Fixture, MatchEvent, MatchEventKind, MatchScoreInput, MatchScorecard } from "./domain";
+// Explicit extension so the Node test runner (type stripping) can load it too.
+import { fixtureAwards, fixtureOutcome, walkoverScores } from "./points-rules.ts";
 
 const basketball = new Set(["basketball"]);
 const football = new Set(["football"]);
@@ -43,11 +44,11 @@ export function recordCricketDelivery(data: CompetitionData, fixture: Fixture, i
   const balls = deliveries.filter((item) => item.legal).length;
   if(balls>0&&balls%6===0){const lastLegal=deliveries.filter(item=>item.legal).at(-1);if(lastLegal?.bowlerId===payload.bowlerId)return "Choose a different bowler for the new over.";}
   const event = data.events.find((item) => item.id === fixture.eventId);
-  const maxBalls = (event?.scoringConfig?.oversPerInnings ?? 8) * 6;
+  const { balls: maxBalls, wickets: maxWickets } = cricketInningsLimits(event, innings);
   if (balls >= maxBalls) return "This innings has reached its over limit.";
-  if (payload.wicket && payload.wicket.kind !== "retired-hurt" && innings.deliveries.filter((item) => item.wicket && item.wicket.kind !== "retired-hurt" && !item.reversedAt).length >= (event?.scoringConfig?.wicketsPerInnings ?? 10)) return "This innings has reached its wicket limit.";
+  if (payload.wicket && payload.wicket.kind !== "retired-hurt" && innings.deliveries.filter((item) => item.wicket && item.wicket.kind !== "retired-hurt" && !item.reversedAt).length >= maxWickets) return "This innings has reached its wicket limit.";
   // Cricket notation is zero-based for the over: 0.1 is the first legal ball.
-  const delivery: CricketDelivery = { ...payload, id: randomUUID(), over: Math.floor(balls / 6), ball: balls % 6 + (legal ? 1 : 0), legal, createdAt: new Date().toISOString(), actor };
+  const delivery: CricketDelivery = { ...payload, id: crypto.randomUUID(), over: Math.floor(balls / 6), ball: balls % 6 + (legal ? 1 : 0), legal, createdAt: new Date().toISOString(), actor };
   innings.strikerId = payload.batterId;
   innings.nonStrikerId = payload.nonStrikerId;
   innings.bowlerId = payload.bowlerId;
@@ -66,10 +67,11 @@ export function recordCricketDelivery(data: CompetitionData, fixture: Fixture, i
   syncCricketFixtureTotals(fixture);
   const currentRuns = innings.deliveries.filter((item) => !item.reversedAt).reduce((sum, item) => sum + item.batRuns + item.extraRuns + (item.extraType === "wide" || item.extraType === "no-ball" ? 1 : 0), 0);
   const wickets = innings.deliveries.filter((item) => item.wicket && item.wicket.kind !== "retired-hurt" && !item.reversedAt).length;
-  const firstInningsRuns = cricket.innings.find((item) => item.number === 1)?.deliveries.filter((item) => !item.reversedAt).reduce((sum, item) => sum + item.batRuns + item.extraRuns + (item.extraType === "wide" || item.extraType === "no-ball" ? 1 : 0), 0);
-  const targetReached = innings.number === 2 && firstInningsRuns !== undefined && currentRuns > firstInningsRuns;
-  if (targetReached || completedBalls >= maxBalls || wickets >= (event?.scoringConfig?.wicketsPerInnings ?? 10)) { innings.completed = true; innings.completionReason = targetReached ? "Target reached" : completedBalls >= maxBalls ? "Overs completed" : "All out"; }
-  fixture.periodLabel = `Innings ${innings.number}`;
+  const runsToBeat = cricketRunsToBeat(cricket.innings, innings);
+  const targetReached = runsToBeat !== undefined && currentRuns > runsToBeat;
+  if (targetReached || completedBalls >= maxBalls || wickets >= maxWickets) { innings.completed = true; innings.completionReason = targetReached ? "Target reached" : completedBalls >= maxBalls ? "Overs completed" : "All out"; }
+  syncCricketFixtureTotals(fixture);
+  fixture.periodLabel = cricketPeriodLabel(innings);
   fixture.clockLabel = `${Math.floor(completedBalls / 6)}.${completedBalls % 6} ov · ${currentRuns}/${wickets}`;
   fixture.updatedAt = new Date().toISOString();
   return null;
@@ -82,16 +84,19 @@ export function startCricketInnings(data: CompetitionData, fixture: Fixture, inp
   if (!card.cricket && card.events.length) return "This fixture has legacy cricket entries. Use a fresh fixture for the detailed scorer; existing entries were preserved.";
   const cricket = card.cricket ??= { innings: [] };
   if (cricket.innings.length && !cricket.innings.at(-1)?.completed) return "Complete the current innings first.";
-  if (cricket.innings.length >= 2) return "Both innings have already been recorded.";
+  if (cricket.innings.length >= 4) return "The Super Over is complete. If it is level too, a central admin records the bowl-out winner.";
+  if (cricket.innings.length === 2 && inningsRuns(cricket.innings[0]) !== inningsRuns(cricket.innings[1])) return "Both innings have already been recorded.";
   const { battingSide, strikerId, nonStrikerId, bowlerId } = input.cricketInnings;
+  if (battingSide !== "a" && battingSide !== "b") return "Choose the batting side.";
   if (strikerId === nonStrikerId) return "Choose two different opening batters.";
   const previousInnings = cricket.innings.at(-1);
-  if (previousInnings && battingSide === previousInnings.battingSide) return "The second innings must be played by the other section.";
+  // Innings 2 and 4 belong to the other side; the Super Over (innings 3) may open with either, usually the side that batted second.
+  if (previousInnings && cricket.innings.length % 2 === 1 && battingSide === previousInnings.battingSide) return "The second innings must be played by the other section.";
   const battingRoster = data.entries.filter((entry) => entry.eventId === fixture.eventId && entry.sectionId === (battingSide === "a" ? fixture.sectionA : fixture.sectionB)).flatMap((entry) => entry.participantIds);
   const bowlingRoster = data.entries.filter((entry) => entry.eventId === fixture.eventId && entry.sectionId === (battingSide === "a" ? fixture.sectionB : fixture.sectionA)).flatMap((entry) => entry.participantIds);
   if (!battingRoster.includes(strikerId) || !battingRoster.includes(nonStrikerId) || !bowlingRoster.includes(bowlerId)) return "Opening players must belong to the submitted team rosters.";
   cricket.innings.push({ number: cricket.innings.length + 1, battingSide, strikerId, nonStrikerId, openingStrikerId:strikerId, openingNonStrikerId:nonStrikerId, bowlerId, deliveries: [] });
-  fixture.periodLabel = `Innings ${cricket.innings.length}`;
+  fixture.periodLabel = cricketPeriodLabel(cricket.innings.at(-1)!);
   fixture.clockLabel = "0.0 ov";
   return null;
 }
@@ -101,7 +106,9 @@ export function endCricketInnings(fixture: Fixture): string | null {
   if (!innings || innings.completed) return "There is no active innings to end.";
   innings.completed = true;
   innings.completionReason = "Declared by scorer";
+  syncCricketFixtureTotals(fixture);
   if (innings.number === 2) fixture.periodLabel = "Match complete";
+  if (innings.number === 4) fixture.periodLabel = "Super Over complete";
   fixture.clockLabel = `${Math.floor(innings.deliveries.filter(item=>item.legal&&!item.reversedAt).length/6)}.${innings.deliveries.filter(item=>item.legal&&!item.reversedAt).length%6} ov · ${innings.deliveries.filter(item=>!item.reversedAt).reduce((sum,item)=>sum+deliveryTotal(item),0)} runs`;
   fixture.updatedAt = new Date().toISOString();
   return null;
@@ -116,15 +123,15 @@ export function reverseCricketDelivery(data: CompetitionData, fixture: Fixture, 
   delivery.reversedAt = new Date().toISOString();
   delivery.correctionReason = `${input.correctionReason.trim()} · corrected by ${actor}`;
   const definition=data.events.find(e=>e.id===fixture.eventId);
-  const definitionMaxOvers = definition?.scoringConfig?.oversPerInnings ?? 8;
+  const limits=cricketInningsLimits(definition,innings);
   const active=innings.deliveries.filter(d=>!d.reversedAt);
   const activeBalls=active.filter(d=>d.legal).length;
   const activeWickets=active.filter(d=>d.wicket&&d.wicket.kind!=="retired-hurt").length;
-  const firstRuns=fixture.scorecard?.cricket?.innings.find(item=>item.number===1)?.deliveries.filter(d=>!d.reversedAt).reduce((sum,d)=>sum+deliveryTotal(d),0) ?? 0;
-  const inningsRuns=active.reduce((sum,d)=>sum+deliveryTotal(d),0);
-  const reachedTarget=innings.number===2&&inningsRuns>firstRuns;
-  innings.completed=activeBalls>=definitionMaxOvers*6||activeWickets>=(definition?.scoringConfig?.wicketsPerInnings??10)||reachedTarget||innings.completionReason==="Declared by scorer";
-  innings.completionReason=innings.completed?(reachedTarget?"Target reached":activeBalls>=definitionMaxOvers*6?"Overs completed":activeWickets>=(definition?.scoringConfig?.wicketsPerInnings??10)?"All out":"Declared by scorer"):undefined;
+  const runsToBeat=cricketRunsToBeat(fixture.scorecard?.cricket?.innings??[],innings);
+  const runsNow=active.reduce((sum,d)=>sum+deliveryTotal(d),0);
+  const reachedTarget=runsToBeat!==undefined&&runsNow>runsToBeat;
+  innings.completed=activeBalls>=limits.balls||activeWickets>=limits.wickets||reachedTarget||innings.completionReason==="Declared by scorer";
+  innings.completionReason=innings.completed?(reachedTarget?"Target reached":activeBalls>=limits.balls?"Overs completed":activeWickets>=limits.wickets?"All out":"Declared by scorer"):undefined;
   // Restore the last active ball's resulting batter/bowler state when a correction is made.
   let striker=innings.openingStrikerId??innings.strikerId;
   let nonStriker=innings.openingNonStrikerId??innings.nonStrikerId;
@@ -139,8 +146,29 @@ export function reverseCricketDelivery(data: CompetitionData, fixture: Fixture, 
   }
   innings.strikerId=striker;innings.nonStrikerId=nonStriker;innings.bowlerId=bowler;
   syncCricketFixtureTotals(fixture);
-  fixture.periodLabel=`Innings ${innings.number}`;
-  fixture.clockLabel=`${Math.floor(activeBalls/6)}.${activeBalls%6} ov · ${inningsRuns}/${activeWickets}`;
+  fixture.periodLabel=cricketPeriodLabel(innings);
+  fixture.clockLabel=`${Math.floor(activeBalls/6)}.${activeBalls%6} ov · ${runsNow}/${activeWickets}`;
+  fixture.updatedAt = new Date().toISOString();
+  return null;
+}
+
+/**
+ * Rulebook tie: Super Over, then a bowl-out. A bowl-out isn't scored ball by ball, so a central admin records its
+ * winner here, with a note for the audit log. Allowed only while the match and any Super Over are level.
+ */
+export function recordCricketBowlOut(data: CompetitionData, fixture: Fixture, input: MatchScoreInput, actor: string): string | null {
+  if (sportIdForFixture(data, fixture) !== "cricket") return "Bowl-outs are for cricket matches.";
+  if (fixture.status !== "live") return "The match must be live to record a bowl-out.";
+  const winner = input.tieBreakWinner;
+  if (winner !== "a" && winner !== "b") return "Choose the division that won the bowl-out.";
+  const note = typeof input.reviewNote === "string" ? input.reviewNote.trim().slice(0, 300) : "";
+  syncCricketFixtureTotals(fixture);
+  const state = cricketTieState(fixture);
+  if (state === "in-play") return "Complete both innings first.";
+  if (state === "super-over") return "Finish the Super Over first.";
+  if (state === "decided" && fixture.tieBreak?.method !== "bowl-out") return "This match is already decided.";
+  fixture.tieBreak = { winner, method: "bowl-out", note: note || undefined, at: new Date().toISOString(), by: actor };
+  fixture.periodLabel = "Bowl-out";
   fixture.updatedAt = new Date().toISOString();
   return null;
 }
@@ -149,10 +177,54 @@ function deliveryTotal(delivery: CricketDelivery): number {
   return delivery.batRuns + delivery.extraRuns + (delivery.extraType === "wide" || delivery.extraType === "no-ball" ? 1 : 0);
 }
 
+/** Innings 1 and 2 are the match; innings 3 and 4 are the Super Over: one over a side, two wickets. */
+export function cricketInningsLimits(event: Pick<EventDefinition, "scoringConfig"> | undefined, innings: Pick<CricketInnings, "number">): { balls: number; wickets: number } {
+  if (innings.number > 2) return { balls: 6, wickets: 2 };
+  return { balls: (event?.scoringConfig?.oversPerInnings ?? 8) * 6, wickets: event?.scoringConfig?.wicketsPerInnings ?? 10 };
+}
+
+export function inningsRuns(innings: Pick<CricketInnings, "deliveries">): number {
+  return innings.deliveries.filter((item) => !item.reversedAt).reduce((sum, item) => sum + deliveryTotal(item), 0);
+}
+
+/** The score a chasing innings (2, or the Super Over's 4) must pass; undefined for an innings batting first. */
+export function cricketRunsToBeat(all: CricketInnings[], innings: Pick<CricketInnings, "number">): number | undefined {
+  if (innings.number % 2 === 1) return undefined;
+  const previous = all.find((item) => item.number === innings.number - 1);
+  return previous ? inningsRuns(previous) : undefined;
+}
+
+function cricketPeriodLabel(innings: Pick<CricketInnings, "number">): string {
+  return innings.number > 2 ? `Super Over ${innings.number - 2}` : `Innings ${innings.number}`;
+}
+
+/**
+ * Where a cricket match stands after the regulation innings: "level" opens the Super Over, "super-over-level" calls
+ * for a bowl-out (recorded by a central admin), "decided" when the result can be submitted.
+ */
+export function cricketTieState(fixture: Pick<Fixture, "scorecard" | "tieBreak">): "in-play" | "decided" | "level" | "super-over" | "super-over-level" {
+  const innings = fixture.scorecard?.cricket?.innings ?? [];
+  const main = innings.filter((item) => item.number <= 2);
+  if (main.length < 2 || !main.every((item) => item.completed)) return "in-play";
+  if (inningsRuns(main[0]) !== inningsRuns(main[1])) return "decided";
+  if (fixture.tieBreak) return "decided";
+  const superOver = innings.filter((item) => item.number > 2);
+  if (!superOver.length) return "level";
+  if (superOver.length < 2 || !superOver.every((item) => item.completed)) return "super-over";
+  return "super-over-level";
+}
+
 function syncCricketFixtureTotals(fixture: Fixture): void {
   const card=fixture.scorecard;
-  const innings=card?.cricket?.innings;
-  if(!card||!innings)return;
+  const all=card?.cricket?.innings;
+  if(!card||!all)return;
+  // The Super Over decides a tie but isn't part of the score, net run rate, or the batting and bowling figures.
+  const innings=all.filter(item=>item.number<=2);
+  const superOver=all.filter(item=>item.number>2);
+  if(superOver.length===2&&superOver.every(item=>item.completed)&&inningsRuns(superOver[0])!==inningsRuns(superOver[1])){
+    const winner=inningsRuns(superOver[0])>inningsRuns(superOver[1])?superOver[0].battingSide:superOver[1].battingSide;
+    if(fixture.tieBreak?.method!=="bowl-out")fixture.tieBreak={winner,method:"super-over",at:new Date().toISOString(),by:"scorer"};
+  }else if(fixture.tieBreak?.method==="super-over")fixture.tieBreak=undefined;
   for(const side of ["a","b"] as const){
     const sideInnings=innings.filter(item=>item.battingSide===side);
     const deliveries=sideInnings.flatMap(item=>item.deliveries).filter(item=>!item.reversedAt);
@@ -177,14 +249,7 @@ export function allowedKinds(sportId: string): MatchEventKind[] {
 export function finalizeFixtureResult(data: CompetitionData, fixture: Fixture, actor: string): string | null {
   const event = data.events.find((item) => item.id === fixture.eventId);
   if (!event?.pointsPolicy.published) return "Publish this event's points policy before submitting the result.";
-  const outcome = fixture.noResult ? "draw" : fixture.scoreA === fixture.scoreB ? "draw" : fixture.scoreA > fixture.scoreB ? "a_win" : "b_win";
-  const configured = event.pointsPolicy.pointsByOutcome ?? {};
-  const fallback = fixture.stage === "final" ? configured.finalWin ?? configured.win ?? event.pointsPolicy.places[0] ?? 0 : configured.leagueWin ?? configured.leagueTopper ?? configured.win ?? event.pointsPolicy.places[0] ?? 0;
-  const lossPoints = fixture.stage === "semifinal" ? configured.semifinalLoss ?? configured.loss ?? 0 : configured.leagueLoss ?? configured.loss ?? 0;
-  const winPoints = configured[outcome] ?? configured[outcome.replace("_", "")] ?? (outcome === "draw" ? configured.draw ?? 0 : fallback);
-  const drawPoints = configured.draw ?? 0;
-  fixture.awardedPointsA = outcome === "a_win" ? winPoints : outcome === "b_win" ? lossPoints : drawPoints;
-  fixture.awardedPointsB = outcome === "b_win" ? winPoints : outcome === "a_win" ? lossPoints : drawPoints;
+  [fixture.awardedPointsA, fixture.awardedPointsB] = fixtureAwards(event.pointsPolicy, fixture.stage, fixtureOutcome(fixture));
   fixture.status = "completed";
   fixture.resultConfirmed = true;
   fixture.resultSubmittedAt ??= new Date().toISOString();
@@ -220,6 +285,21 @@ export function migrateLegacyResults(data: CompetitionData): void {
 
 export function recordMatchEvent(data: CompetitionData, fixture: Fixture, input: MatchScoreInput, actor: string): string | null {
   if (isAthleticsFixture(data, fixture) && input.action !== "submit") return "Athletics uses result/place entry, not live match scoring.";
+  if (input.action === "walkover") {
+    if (fixture.status === "completed") return "This result is already final. Reopen it before recording a walkover.";
+    const winner = input.walkoverWinner;
+    if (winner !== "a" && winner !== "b") return "Choose the side that turned up.";
+    const event = data.events.find((item) => item.id === fixture.eventId);
+    if (!event) return "Event not found.";
+    [fixture.scoreA, fixture.scoreB] = walkoverScores(event, winner);
+    fixture.walkoverWinner = winner;
+    fixture.noResult = false;
+    fixture.periodLabel = "Walkover";
+    fixture.clockLabel = "—";
+    fixture.resultSubmittedAt = new Date().toISOString();
+    fixture.resultSubmittedBy = actor;
+    return finalizeFixtureResult(data, fixture, actor);
+  }
   if (input.action === "start") {
     if (fixture.status !== "scheduled") return "Only scheduled matches can be started.";
     fixture.status = "live";
@@ -227,7 +307,14 @@ export function recordMatchEvent(data: CompetitionData, fixture: Fixture, input:
   }
   if (input.action === "submit") {
     if (fixture.status !== "live") return "Only live matches can be submitted.";
-    if (cricket.has(sportIdForFixture(data, fixture)) && (fixture.scorecard?.cricket?.innings.length !== 2 || !fixture.scorecard.cricket.innings.every((innings) => innings.completed))) return "Complete both cricket innings before submitting the result.";
+    if (cricket.has(sportIdForFixture(data, fixture))) {
+      syncCricketFixtureTotals(fixture);
+      const state = cricketTieState(fixture);
+      if (state === "in-play") return "Complete both cricket innings before submitting the result.";
+      if (state === "level") return "Scores are level. Play the Super Over before submitting the result.";
+      if (state === "super-over") return "Finish the Super Over before submitting the result.";
+      if (state === "super-over-level") return "The Super Over is level too. A central admin records the bowl-out winner first.";
+    }
     if (isAthleticsFixture(data, fixture)) return "Enter the athletics result before submitting.";
     fixture.resultSubmittedAt = new Date().toISOString();
     fixture.resultSubmittedBy = actor;
@@ -239,6 +326,8 @@ export function recordMatchEvent(data: CompetitionData, fixture: Fixture, input:
     if (!input.reviewNote?.trim()) return "Add a reason for reopening this result.";
     fixture.status = "live";
     fixture.resultConfirmed = false;
+    fixture.walkoverWinner = undefined;
+    fixture.tieBreak = undefined;
     fixture.resultFinalizedAt = undefined;
     fixture.resultFinalizedBy = undefined;
     fixture.awardedPointsA = 0;
@@ -264,7 +353,7 @@ export function recordMatchEvent(data: CompetitionData, fixture: Fixture, input:
     if (!original) return "The match event was not found or was already reversed.";
     if (!input.correctionReason?.trim()) return "Add a short reason for the correction.";
     original.reversedAt = new Date().toISOString();
-    card.events.push({ ...original, id: randomUUID(), kind: "score", points: 0, label: "Correction", detail: input.correctionReason.trim(), reversesEventId: original.id, actor, createdAt: new Date().toISOString() });
+    card.events.push({ ...original, id: crypto.randomUUID(), kind: "score", points: 0, label: "Correction", detail: input.correctionReason.trim(), reversesEventId: original.id, actor, createdAt: new Date().toISOString() });
     recomputeScore(data, fixture);
     fixture.updatedAt = new Date().toISOString();
     return null;
@@ -275,19 +364,25 @@ export function recordMatchEvent(data: CompetitionData, fixture: Fixture, input:
     const definition = data.events.find((item) => item.id === fixture.eventId);
     const enabled = definition?.scoringConfig?.enabledActions ?? allowedKinds(sportIdForFixture(data, fixture));
     if (!input.event || !enabled.includes(input.event.kind)) return "This scoring action is not available for the fixture's sport.";
-    event = input.event;
-  } else {
+    const raw = input.event;
+    if (raw.side !== "a" && raw.side !== "b") return "Choose which side scored.";
+    const text = (value: unknown, max: number) => (typeof value === "string" ? value.slice(0, max) : undefined);
+    // Keep only the fields a scorer may set; reversal and audit fields are the server's to write.
+    event = { kind: raw.kind, side: raw.side, points: raw.points, playerId: text(raw.playerId, 80), secondaryPlayerId: text(raw.secondaryPlayerId, 80), label: text(raw.label, 80), detail: text(raw.detail, 200), period: text(raw.period, 40) };
+  } else if (["increment-a", "increment-b", "decrement-a", "decrement-b"].includes(input.action)) {
     const side = input.action.endsWith("a") ? "a" : "b";
     event = { kind: "score", side, points: 1, label: "Score +1" };
     if (input.action.startsWith("decrement")) {
       const previous = [...card.events].reverse().find((item) => item.side === side && !item.reversedAt && item.points > 0);
       if (!previous) return "There is no score event to remove.";
       previous.reversedAt = new Date().toISOString();
-      card.events.push({ ...previous, id: randomUUID(), kind: "score", points: 0, label: "Score correction", reversesEventId: previous.id, actor, createdAt: new Date().toISOString() });
+      card.events.push({ ...previous, id: crypto.randomUUID(), kind: "score", points: 0, label: "Score correction", reversesEventId: previous.id, actor, createdAt: new Date().toISOString() });
       recomputeScore(data, fixture);
       fixture.updatedAt = new Date().toISOString();
       return null;
     }
+  } else {
+    return "Unknown scoring action.";
   }
   if (!Number.isInteger(event.points) || event.points < 0 || event.points > 100) return "Enter a valid event score.";
   if (event.playerId && !eligiblePlayers.has(event.playerId)) return "Choose a player from the participating teams.";
@@ -307,7 +402,7 @@ export function recordMatchEvent(data: CompetitionData, fixture: Fixture, input:
   const maxWickets = definition?.scoringConfig?.wicketsPerInnings ?? 10;
   if (isCricket && event.kind === "wicket" && (event.side === "a" ? card.wicketsA : card.wicketsB) >= maxWickets) return `This innings cannot exceed ${maxWickets} wickets.`;
   const overBall = isCricket ? `${Math.floor(sideBalls / 6)}.${sideBalls % 6 + (legal ? 1 : 0)}` : undefined;
-  const stored: MatchEvent = { ...event, playerName: event.playerId ? data.participants.find((player) => player.id === event.playerId)?.name : undefined, secondaryPlayerName: event.secondaryPlayerId ? data.participants.find((player) => player.id === event.secondaryPlayerId)?.name : undefined, id: randomUUID(), period: event.period || (isCricket ? `Innings ${event.side === "a" ? 1 : 2}` : event.kind === "set-point" ? `Set ${card.setsA + card.setsB + 1}` : fixture.periodLabel || "Match"), overBall, legalDelivery: isCricket && legal, actor, createdAt: new Date().toISOString() };
+  const stored: MatchEvent = { ...event, playerName: event.playerId ? data.participants.find((player) => player.id === event.playerId)?.name : undefined, secondaryPlayerName: event.secondaryPlayerId ? data.participants.find((player) => player.id === event.secondaryPlayerId)?.name : undefined, id: crypto.randomUUID(), period: event.period || (isCricket ? `Innings ${event.side === "a" ? 1 : 2}` : event.kind === "set-point" ? `Set ${card.setsA + card.setsB + 1}` : fixture.periodLabel || "Match"), overBall, legalDelivery: isCricket && legal, actor, createdAt: new Date().toISOString() };
   card.events.push(stored);
   if (isCricket && legal) { if (event.side === "a") card.legalBallsA += 1; else card.legalBallsB += 1; }
   if (event.kind === "set-point") {

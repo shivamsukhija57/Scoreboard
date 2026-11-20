@@ -13,7 +13,7 @@ export async function PUT(request: Request) {
   }
   const result = await updateCompetition(access.email, "participation-cap-update", `Set ${body.sectionId} sports cap to ${body.maxSportsPerPlayer}`, body.sectionId, (data) => {
     const section = data.sections.find((item) => item.id === body.sectionId);
-    if (!section) return { error: "Section not found.", status: 404 };
+    if (!section) return { error: "Division not found.", status: 404 };
     section.maxSportsPerPlayer = body.maxSportsPerPlayer;
     return { section };
   });

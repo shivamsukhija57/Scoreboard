@@ -3,6 +3,7 @@ import { auth } from "../../auth";
 import type { CompetitionData, Role, RoleAssignment, UserAccess } from "./domain";
 import { readCompetition } from "./store";
 import { auditForRole, canScoreEvent } from "./live-scoring-utils";
+import { canJudgeEvent, presentJudging } from "./judging";
 
 export async function getUserAccess(): Promise<UserAccess | null> {
   const session = await auth();
@@ -70,12 +71,35 @@ export function presentCompetition(data: CompetitionData, access: UserAccess): C
   const publicGuest = access.email === "guest@public.invalid";
   const managedEvents = new Set(access.assignments.filter((assignment) => assignment.role === "event-head").map((assignment) => assignment.scopeId));
   const managedSections = new Set(access.assignments.filter((assignment) => assignment.role === "section-admin").map((assignment) => assignment.scopeId));
+  // Organizer emails are only for the central admins; everyone else sees "Organizer". Guests also lose player names.
+  const hideEmails = (text?: string) => text?.replace(/[^\s@<>()]+@[^\s@<>()]+/g, "an organizer");
+  const presentFixture = (fixture: CompetitionData["fixtures"][number]) => {
+    const scorer = managedEvents.has(fixture.eventId);
+    const scorecard = fixture.scorecard && {
+      ...fixture.scorecard,
+      events: fixture.scorecard.events.map((event) => ({
+        ...event,
+        ...(scorer ? {} : { playerId: undefined, secondaryPlayerId: undefined }),
+        ...(publicGuest ? { playerName: undefined, secondaryPlayerName: undefined } : {}),
+        actor: "Organizer",
+      })),
+      cricket: fixture.scorecard.cricket && { innings: fixture.scorecard.cricket.innings.map((innings) => ({ ...innings, deliveries: innings.deliveries.map((delivery) => ({ ...delivery, actor: "Organizer", correctionReason: hideEmails(delivery.correctionReason) })) })) },
+    };
+    return { ...fixture, scorecard, tieBreak: fixture.tieBreak && { ...fixture.tieBreak, by: "Organizer", note: hideEmails(fixture.tieBreak.note) }, resultSubmittedBy: undefined, resultFinalizedBy: undefined, resultReviewedBy: undefined, resultReviewNote: hideEmails(fixture.resultReviewNote) };
+  };
   return {
     ...data,
     assignments: central ? data.assignments : [],
     audit: auditForRole(data.audit ?? [], central),
     entries: publicGuest ? [] : data.entries,
-    fixtures: central ? data.fixtures : data.fixtures.map((fixture) => ({ ...fixture, scorecard: fixture.scorecard && !managedEvents.has(fixture.eventId) ? { ...fixture.scorecard, events: fixture.scorecard.events.map((event) => ({ ...event, playerId: undefined, secondaryPlayerId: undefined, actor: "Organizer" })) } : fixture.scorecard })),
+    events: central ? data.events : data.events.map((event) => ({ ...event, headEmails: [] })),
+    bonusAwards: central ? data.bonusAwards : data.bonusAwards?.map((bonus) => ({ ...bonus, awardedBy: "Organizer" })),
+    champion: central || !data.champion ? data.champion : { ...data.champion, announcedBy: "Organizer" },
+    fixtures: central ? data.fixtures : data.fixtures.map(presentFixture),
+    // Live quiz and hunt tallies are public (they show on the event page); who scored each entry is not.
+    // Judged Stage events stay sealed: judges see only their own marks, coordinators everything, others the announced result.
+    judging: presentJudging(data.judging, { email: access.email, central, coordinates: (eventId) => canScoreEvent(access.assignments, eventId), judges: (eventId) => canJudgeEvent(access.assignments, eventId) }),
+    tallies: central || !data.tallies ? data.tallies : Object.fromEntries(Object.entries(data.tallies).map(([id, tally]) => [id, { ...tally, entries: tally.entries.map((entry) => ({ ...entry, by: "Organizer", reverseReason: hideEmails(entry.reverseReason) })) }])),
     participants: publicGuest ? [] : data.participants.map((participant) => ({
       ...participant,
       studentId: central || managedSections.has(participant.sectionId) ? participant.studentId : "",

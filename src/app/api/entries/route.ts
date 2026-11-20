@@ -22,11 +22,16 @@ export async function POST(request: Request) {
   const body = (await request.json()) as EntryInput;
   const central = isCentralAdmin(access);
   if (!central && !canManageSection(access, body.sectionId)) {
-    return NextResponse.json({ error: "You do not administer this section." }, { status: 403 });
+    return NextResponse.json({ error: "You do not administer this division." }, { status: 403 });
   }
 
+  if (!Array.isArray(body.participants) || body.participants.length > 40) return NextResponse.json({ error: "An entry lists at most 40 players." }, { status: 400 });
+  if (body.participants.some((person) => typeof person?.name !== "string" || typeof person?.studentId !== "string" || person.name.length > 80 || person.studentId.length > 40)) {
+    return NextResponse.json({ error: "Each player needs a name (up to 80 characters) and a student ID (up to 40)." }, { status: 400 });
+  }
   const entryNumber = Math.max(1, Math.floor(Number(body.entryNumber) || 1));
   const result = await updateCompetition(access.email, body.submit ? "entry-submit" : "entry-save", `${body.sectionId} / ${body.eventId} / team ${entryNumber}`, body.eventId, (data) => {
+    if (!data.sections.some((section) => section.id === body.sectionId)) return { error: "Choose a valid division.", status: 400 };
     const event = data.events.find((item) => item.id === body.eventId);
     if (!event) return { error: "Choose a valid event.", status: 404 };
     if (entryNumber > event.entriesPerDivision) return { error: `This event allows ${event.entriesPerDivision} entry per division.`, status: 400 };
@@ -164,6 +169,12 @@ export async function POST(request: Request) {
       }
     }
 
+    // Drafts and submissions alike: a division may only list (and rename) its own players. Without this, a draft save
+    // could rename another division's players or claim them first so their own division could never submit them.
+    for (const person of normalized) {
+      const owner = data.participants.find((candidate) => candidate.studentId.toLowerCase() === person.studentId.toLowerCase());
+      if (owner && owner.sectionId !== body.sectionId) return { error: `${person.studentId} is already registered in another division.`, status: 409 };
+    }
     const participantIds: string[] = [];
     for (const person of normalized) {
       let saved = data.participants.find((candidate) => candidate.studentId.toLowerCase() === person.studentId.toLowerCase());

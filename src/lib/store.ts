@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { AuditEntry, CompetitionData } from "./domain";
-import { createSeedData } from "./seed";
+import { applyRulebookEdition, createSeedData } from "./seed";
 import { migrateLegacyResults } from "./match-scorecard";
 
 const dataFile = path.resolve(process.cwd(), process.env.DATA_FILE ?? ".data/competition.json");
@@ -89,11 +89,13 @@ async function ensureLocalData(): Promise<void> {
 export async function readCompetition(): Promise<CompetitionData> {
   if (useSupabase()) {
     const data = (await readSupabaseState()).state;
+    applyRulebookEdition(data);
     migrateLegacyResults(data);
     return data;
   }
   await ensureLocalData();
   const data = JSON.parse(await readFile(dataFile, "utf8")) as CompetitionData;
+  applyRulebookEdition(data);
   migrateLegacyResults(data);
   return data;
 }
@@ -111,6 +113,7 @@ async function updateSupabaseCompetition<T>(
 ): Promise<T> {
   for (let attempt = 0; attempt < 8; attempt += 1) {
     const snapshot = await readSupabaseState();
+    applyRulebookEdition(snapshot.state);
     migrateLegacyResults(snapshot.state);
     const result = await update(snapshot.state);
     if (isRejectedResult(result)) return result;
@@ -150,6 +153,7 @@ export async function updateCompetition<T>(
 
     await ensureLocalData();
     const data = JSON.parse(await readFile(dataFile, "utf8")) as CompetitionData;
+    applyRulebookEdition(data);
     migrateLegacyResults(data);
     result = await update(data);
     if (isRejectedResult(result)) return;
@@ -166,7 +170,15 @@ export async function updateCompetition<T>(
     await mkdir(path.dirname(dataFile), { recursive: true });
     const temporary = `${dataFile}.${randomUUID()}.tmp`;
     await writeFile(temporary, JSON.stringify(data, null, 2), "utf8");
-    await rename(temporary, dataFile);
+    // Windows refuses the rename (EPERM/EBUSY) while another request is reading the file; retry briefly.
+    for (let attempt = 0; ; attempt += 1) {
+      try { await rename(temporary, dataFile); break; }
+      catch (error) {
+        const code = (error as NodeJS.ErrnoException).code;
+        if (attempt >= 8 || (code !== "EPERM" && code !== "EBUSY" && code !== "EACCES")) throw error;
+        await new Promise((resolve) => setTimeout(resolve, 25 * (attempt + 1)));
+      }
+    }
   };
   const next = writeQueue.then(write, write);
   writeQueue = next.then(() => undefined, () => undefined);

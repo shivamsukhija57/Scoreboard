@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { canManageEvent, getUserAccess, isCentralAdmin, presentCompetition } from "@/lib/access";
 import type { MatchScoreInput } from "@/lib/domain";
-import { endCricketInnings, recordCricketDelivery, recordMatchEvent, reverseCricketDelivery, startCricketInnings } from "@/lib/match-scorecard";
+import { endCricketInnings, recordCricketBowlOut, recordCricketDelivery, recordMatchEvent, reverseCricketDelivery, startCricketInnings } from "@/lib/match-scorecard";
 import { readCompetition, updateCompetition } from "@/lib/store";
 import { describeMatchAuditAction, isUnchangedSnapshot } from "@/lib/live-scoring-utils";
 
@@ -35,8 +35,9 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
     }
 
     if (input.action === "reopen" && !isCentralAdmin(access)) return { error: "Only the central admin can reopen finalized results.", status: 403 };
+    if (input.action === "cricket-bowl-out" && !isCentralAdmin(access)) return { error: "Only a central admin can record a bowl-out winner.", status: 403 };
     const before = { scoreA: match.scoreA, scoreB: match.scoreB, pointsA: match.awardedPointsA ?? 0, pointsB: match.awardedPointsB ?? 0 };
-    const error = input.action === "cricket-delivery" ? recordCricketDelivery(data, match, input, access.email) : input.action === "cricket-start-innings" ? startCricketInnings(data, match, input) : input.action === "cricket-end-innings" ? endCricketInnings(match) : input.action === "cricket-correct-delivery" ? reverseCricketDelivery(data, match, input, access.email) : recordMatchEvent(data, match, input, access.email);
+    const error = input.action === "cricket-bowl-out" ? recordCricketBowlOut(data, match, input, access.email) : input.action === "cricket-delivery" ? recordCricketDelivery(data, match, input, access.email) : input.action === "cricket-start-innings" ? startCricketInnings(data, match, input) : input.action === "cricket-end-innings" ? endCricketInnings(match) : input.action === "cricket-correct-delivery" ? reverseCricketDelivery(data, match, input, access.email) : recordMatchEvent(data, match, input, access.email);
     if (error) return { error, status: 400 };
     match.updatedAt = new Date().toISOString();
     auditDetail = describeMatchAuditAction(data, match, input, before);

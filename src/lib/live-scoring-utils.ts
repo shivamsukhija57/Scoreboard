@@ -37,7 +37,8 @@ export function projectScoreAction(fixture: Fixture, input: MatchScoreInput): Fi
     if (input.event.side === "a") projection.scoreA += input.event.points;
     else projection.scoreB += input.event.points;
   }
-  if (input.action === "cricket-delivery" && input.cricketDelivery) {
+  // The Super Over (innings 3 and 4) decides a tie but doesn't add to the match score.
+  if (input.action === "cricket-delivery" && input.cricketDelivery && (projection.scorecard?.cricket?.innings.at(-1)?.number ?? 1) <= 2) {
     const delivery = input.cricketDelivery;
     const total = delivery.batRuns + delivery.extraRuns + (delivery.extraType === "wide" || delivery.extraType === "no-ball" ? 1 : 0);
     if (delivery.battingSide === "a") projection.scoreA += total;
@@ -66,7 +67,9 @@ export function canScoreEvent(assignments: RoleAssignment[], eventId: string): b
 export function describeMatchAuditAction(data: CompetitionData, fixture: Fixture, input: MatchScoreInput, before: { scoreA: number; scoreB: number; pointsA: number; pointsB: number }): string {
   const event = data.events.find((item) => item.id === fixture.eventId);
   if (input.action === "submit") return `${event?.name ?? "Match"} · ${fixture.sectionA} ${fixture.scoreA}–${fixture.scoreB} ${fixture.sectionB} · ${fixture.stage ?? "league"} · finalized · points ${fixture.awardedPointsA ?? 0}–${fixture.awardedPointsB ?? 0}`;
+  if (input.action === "walkover") return `${event?.name ?? "Match"} · walkover to ${input.walkoverWinner === "a" ? fixture.sectionA : fixture.sectionB} · recorded ${fixture.scoreA}–${fixture.scoreB} · ${fixture.stage ?? "league"} · points ${fixture.awardedPointsA ?? 0}–${fixture.awardedPointsB ?? 0}`;
   if (input.action === "reopen") return `${event?.name ?? "Match"} · ${fixture.sectionA} ${before.scoreA}–${before.scoreB} ${fixture.sectionB} · reopened for correction · points removed ${before.pointsA}–${before.pointsB} · reason: ${input.reviewNote?.trim()}`;
+  if (input.action === "cricket-bowl-out") return `${event?.name ?? "Cricket"} · ${fixture.sectionA} ${fixture.scoreA}–${fixture.scoreB} ${fixture.sectionB} · level · bowl-out won by ${input.tieBreakWinner === "a" ? fixture.sectionA : fixture.sectionB}${input.reviewNote?.trim() ? ` · ${input.reviewNote.trim().slice(0, 300)}` : ""}`;
   if (input.action === "cricket-correct-delivery" || input.action === "reverse-event") return `${event?.name ?? "Match"} · score corrected ${before.scoreA}–${before.scoreB} → ${fixture.scoreA}–${fixture.scoreB} · reason: ${input.correctionReason?.trim() ?? "not provided"}`;
   if (input.action === "cricket-delivery" && input.cricketDelivery) {
     const delivery = input.cricketDelivery;

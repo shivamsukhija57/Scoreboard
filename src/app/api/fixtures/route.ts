@@ -19,12 +19,22 @@ export async function POST(request: Request) {
     durationMinutes: number;
     venue: string;
     stage?: Fixture["stage"];
+    /** Ring-group events: group-stage match in group 1 or 2 (each division's team N plays in group N). */
+    group?: 1 | 2;
+    /** Ring-group knockouts: which team of each division plays. */
+    entryA?: number;
+    entryB?: number;
     acknowledgeConflict?: boolean;
   };
+  if (body.group !== undefined && body.group !== 1 && body.group !== 2) return NextResponse.json({ error: "Group must be 1 or 2." }, { status: 400 });
+  const entryA = body.group ?? body.entryA;
+  const entryB = body.group ?? body.entryB;
   if (!body.eventId || !body.startsAt || !body.venue || !Number.isFinite(body.durationMinutes) || body.durationMinutes <= 0) {
     return NextResponse.json({ error: "Event, time, venue, and a positive duration are required." }, { status: 400 });
   }
-  if (body.sectionA === body.sectionB) return NextResponse.json({ error: "Choose two different sections." }, { status: 400 });
+  // A division's two teams may only meet in a ring-group knockout (the same-division semifinal rule).
+  const sameDivisionKnockout = body.sectionA === body.sectionB && (body.stage === "semifinal" || body.stage === "final") && !body.group && !!entryA && !!entryB && entryA !== entryB;
+  if (body.sectionA === body.sectionB && !sameDivisionKnockout) return NextResponse.json({ error: "Choose two different divisions. A division's two teams can only meet in a group-format semifinal; set their team numbers." }, { status: 400 });
 
   const result = await updateCompetition(access.email, "fixture-create", `Created ${body.eventId} fixture`, "schedule", (data) => {
     const start = new Date(body.startsAt).getTime();
@@ -50,6 +60,9 @@ export async function POST(request: Request) {
       durationMinutes: body.durationMinutes,
       venue: body.venue.trim(),
       stage: body.stage ?? "league",
+      ...(body.group ? { group: body.group } : {}),
+      ...(entryA ? { entryA } : {}),
+      ...(entryB ? { entryB } : {}),
       status: "scheduled",
       scoreA: 0,
       scoreB: 0,
@@ -62,6 +75,6 @@ export async function POST(request: Request) {
     return { fixture, conflicts: conflicts.length };
   });
 
-  if ("conflict" in result) return NextResponse.json({ error: "This fixture overlaps another venue or section booking.", conflicts: result.conflict }, { status: 409 });
+  if ("conflict" in result) return NextResponse.json({ error: "This fixture overlaps another venue or division booking.", conflicts: result.conflict }, { status: 409 });
   return NextResponse.json(result, { status: 201 });
 }

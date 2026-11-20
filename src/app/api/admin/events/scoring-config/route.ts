@@ -22,7 +22,8 @@ export async function PUT(request: Request) {
     if (!event) return { error: "Event not found.", status: 404 };
     const supported = new Set(allowedKinds(event.sportId));
     if (body.scoringConfig?.enabledActions?.some((action) => !supported.has(action))) return { error: "One or more enabled actions are not supported by this sport.", status: 400 };
-    event.scoringConfig = { ...body.scoringConfig, enabledActions: body.scoringConfig?.enabledActions?.length ? body.scoringConfig.enabledActions : undefined };
+    // Walkover scores are set with the event's points rules, so keep the stored one.
+    event.scoringConfig = { ...body.scoringConfig, walkoverScore: event.scoringConfig?.walkoverScore, enabledActions: body.scoringConfig?.enabledActions?.length ? body.scoringConfig.enabledActions : undefined };
     return { event };
   });
   if ("error" in result) return NextResponse.json({ error: result.error }, { status: result.status });

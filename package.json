@@ -4,24 +4,28 @@
   "description": "Division Wars live scoreboard and event operations app",
   "main": "index.js",
   "scripts": {
-    "dev": "next dev",
+    "dev": "next dev -H 127.0.0.1",
     "build": "next build --webpack",
     "start": "next start",
-    "test": "node --experimental-strip-types --test src/lib/match-scorecard.test.mjs"
+    "test": "node --experimental-strip-types --test src/lib/match-scorecard.test.mjs src/lib/event-tools.test.mjs src/lib/points-rules.test.mjs src/lib/moments.test.mjs src/lib/ring-draw.test.mjs src/lib/tally.test.mjs src/lib/judging.test.mjs src/lib/fixture-import.test.mjs"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "type": "module",
   "dependencies": {
-    "@fontsource/barlow-condensed": "^5.3.0",
-    "@fontsource/dm-sans": "^5.3.0",
+    "@fontsource/big-shoulders-display": "^5.3.0",
     "exceljs": "^4.4.0",
     "lucide-react": "^1.70.0",
     "next": "^16.4.5",
     "next-auth": "^4.24.15",
     "react": "^19.3.1",
     "react-dom": "^19.3.1"
+  },
+  "overrides": {
+    "exceljs": {
+      "uuid": "^11.1.1"
+    }
   },
   "devDependencies": {
     "@types/node": "^26.6.6",
